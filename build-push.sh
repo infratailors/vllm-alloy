@@ -19,7 +19,7 @@
 # This script refuses to overwrite a tag that already exists in the registry.
 set -euo pipefail
 
-REGISTRY_IMAGE="registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy/vllm-alloy"
+REGISTRY_IMAGE="registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy"
 
 # Versions pinned in the Dockerfile — keep these in sync with it (FROM line and
 # the ALLOY_VERSION arg). They form the default tag.

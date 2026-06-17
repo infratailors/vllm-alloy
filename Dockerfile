@@ -12,9 +12,9 @@
 # contract.
 #
 # Build:
-#   docker build -t registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy/vllm-alloy:<tag> .
+#   docker build -t registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy:<tag> .
 # Push:
-#   docker push  registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy/vllm-alloy:<tag>
+#   docker push  registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy:<tag>
 FROM vllm/vllm-openai:v0.11.0
 
 # Pin Alloy; the linux-amd64 zip asset naming is stable across the 1.x line.

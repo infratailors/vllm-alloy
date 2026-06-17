@@ -18,7 +18,7 @@ vLLM CLI entirely from the envs below.
 ## Image path
 
 ```
-registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy/vllm-alloy:<tag>
+registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy:<tag>
 ```
 
 The project is public, so Gcore (and anyone) can pull it anonymously — no
@@ -69,7 +69,7 @@ docker run --gpus all -p 8000:8000 \
   -e ALLOY_REMOTE_WRITE_URL=https://grafana.dev.infratailors.ai/api/v1/write \
   -e ALLOY_API_KEY=<token> \
   -e DEPLOYMENT_ID=local -e USER_ID=me -e PROJECT_ID=test \
-  registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy/vllm-alloy:<tag>
+  registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy:<tag>
 ```
 
 ## Building / publishing

@@ -10,7 +10,7 @@ container. It exists for **Gcore Everywhere Inference**, a managed-container
 platform with no SSH / sidecar / node access — so observability must live *inside*
 the image. There is no application source tree; the repo is a Docker build context.
 
-Image path: `registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy/vllm-alloy:<tag>`
+Image path: `registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy:<tag>`
 
 ## Build & release
 
