@@ -1,0 +1,54 @@
+// config.alloy — scrape vLLM's local /metrics and remote-write to InfraTailors
+// Grafana, tagging every series with deployment identity labels from env vars.
+//
+// River syntax (Grafana Alloy). Env vars are read with sys.env("VAR");
+// coalesce(...) supplies a default when the var is empty/unset.
+
+// ===== Scrape vLLM =====
+prometheus.scrape "vllm" {
+  targets = [
+    { "__address__" = "localhost:8000" },
+  ]
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.infratailors.receiver]
+}
+
+// ===== Scrape the local NVML GPU exporter (DCGM_FI_DEV_* metrics) =====
+// gpu_exporter.py emits DCGM-compatible names on :9400. Series inherit the same
+// external_labels as vLLM via the shared remote_write below.
+prometheus.scrape "dcgm" {
+  targets = [
+    { "__address__" = "localhost:9400" },
+  ]
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.infratailors.receiver]
+}
+
+// ===== Remote-write to InfraTailors Grafana =====
+prometheus.remote_write "infratailors" {
+  // Static labels added to EVERY series, sourced from the deployment's envs.
+  external_labels = {
+    deployment_id  = sys.env("DEPLOYMENT_ID"),
+    user_id        = sys.env("USER_ID"),
+    project_id     = sys.env("PROJECT_ID"),
+    model_name     = coalesce(sys.env("MODEL_NAME"), "bigcode/starcoder2-3b"),
+    cloud_provider = coalesce(sys.env("CLOUD_PROVIDER"), "gcore"),
+    instance_type  = sys.env("INSTANCE_TYPE"),
+  }
+
+  endpoint {
+    url = coalesce(sys.env("ALLOY_REMOTE_WRITE_URL"), "https://grafana.dev.infratailors.ai/api/v1/write")
+
+    // Sends header: Authorization: Bearer <ALLOY_API_KEY>
+    bearer_token = sys.env("ALLOY_API_KEY")
+
+    queue_config {
+      max_samples_per_send = 1000
+      batch_send_deadline  = "5s"
+      min_backoff          = "1s"
+      max_backoff          = "30s"
+    }
+  }
+}
