@@ -1,25 +1,74 @@
 #!/usr/bin/env bash
-# build-push.sh — local/manual build + push of the vLLM+Alloy image.
+# build-push.sh — local build + push of the public vLLM+Alloy image.
 #
-# CI normally publishes this image on git tags (see .gitlab-ci.yml); use this
-# script only for a manual build (e.g. a private fork to your own registry).
+# This is the PRIMARY publish path. CI-on-tag is impractical here because the
+# image builds on top of the multi-GB vllm/vllm-openai base, which overruns
+# GitLab SaaS shared-runner disk. The image changes rarely, so a deliberate
+# local build+push is the simplest reliable option.
 #
-# IMPORTANT: never re-push the SAME tag — Gcore does not re-pull an unchanged
-# tag. Bump the tag on every rebuild (append -2, -3, ... or a git SHA).
+# Usage:
+#   ./build-push.sh                          # build+push the default tag below
+#   ./build-push.sh v0.11.0-alloy1.16.2-2    # build+push a specific tag
+#   TAG=v0.11.0-alloy1.16.2-2 ./build-push.sh  # same, via env
+#   PUSH_LATEST=0 ./build-push.sh            # skip updating the :latest pointer
+#   FORCE=1 ./build-push.sh <existing-tag>   # override the immutability guard
+#
+# IMMUTABILITY: never re-push an existing tag — Gcore does not re-pull an
+# unchanged tag. Bump the trailing counter (-2, -3, …) on every rebuild and
+# update the pinned tag in the webapp (deployment.gcore_vllm_alloy_image).
+# This script refuses to overwrite a tag that already exists in the registry.
 set -euo pipefail
 
-# Where to push. Override via the IMAGE env var or edit this default.
-IMAGE="${IMAGE:-registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy/vllm-alloy:0.11.0-custom}"
+REGISTRY_IMAGE="registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy/vllm-alloy"
+
+# Versions pinned in the Dockerfile — keep these in sync with it (FROM line and
+# the ALLOY_VERSION arg). They form the default tag.
+VLLM_VERSION="0.11.0"
+ALLOY_VERSION="1.16.2"
+DEFAULT_TAG="v${VLLM_VERSION}-alloy${ALLOY_VERSION}-1"
+
+# Tag precedence: 1st CLI arg > $TAG > derived default.
+TAG="${1:-${TAG:-$DEFAULT_TAG}}"
+IMAGE="${REGISTRY_IMAGE}:${TAG}"
+PUSH_LATEST="${PUSH_LATEST:-1}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Building ${IMAGE} from ${SCRIPT_DIR} ..."
-docker build -t "${IMAGE}" "${SCRIPT_DIR}"
+# --- Immutability guard ------------------------------------------------------
+# A public project's registry is anonymously readable, so this manifest check
+# works without write creds. Refuse to clobber an existing immutable tag.
+if docker manifest inspect "${IMAGE}" >/dev/null 2>&1; then
+  if [ "${FORCE:-0}" != "1" ]; then
+    echo "ERROR: ${IMAGE} already exists in the registry." >&2
+    echo "Tags are immutable — bump the counter (e.g. ${DEFAULT_TAG%-*}-2) instead." >&2
+    echo "(Set FORCE=1 to overwrite, but Gcore will NOT re-pull an unchanged tag.)" >&2
+    exit 1
+  fi
+  echo "WARNING: ${IMAGE} exists; FORCE=1 set — overwriting." >&2
+fi
 
-echo "Pushing ${IMAGE} ..."
+# --- Build (amd64-only: vLLM base + Alloy asset are x86) ----------------------
+echo "Building ${IMAGE}"
+echo "  context: ${SCRIPT_DIR}"
+docker build --platform linux/amd64 -t "${IMAGE}" "${SCRIPT_DIR}"
+
+# --- Push --------------------------------------------------------------------
+# Requires a GitLab login with write_registry on this project:
+#   docker login registry.gitlab.com   (username + PAT/deploy token)
+echo "Pushing ${IMAGE}"
 docker push "${IMAGE}"
+
+if [ "${PUSH_LATEST}" = "1" ]; then
+  echo "Updating mutable pointer ${REGISTRY_IMAGE}:latest"
+  docker tag "${IMAGE}" "${REGISTRY_IMAGE}:latest"
+  docker push "${REGISTRY_IMAGE}:latest"
+fi
 
 echo
 echo "Done: ${IMAGE}"
+echo "Verify anonymous pull (project is public):"
+echo "  docker pull ${IMAGE}"
+echo
+echo "Then pin this exact tag in the webapp: deployment.gcore_vllm_alloy_image"
 echo "A public image needs no Gcore registry credentials; a private one needs a"
 echo "registry_credentials object referenced via credentials_name in terraform.tfvars."
