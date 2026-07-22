@@ -1,0 +1,28 @@
+name: Mirror main → GitLab
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: mirror-to-gitlab
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push main to GitLab
+        env:
+          GL_USER: ${{ secrets.GITLAB_DEPLOY_USER }}
+          GL_TOKEN: ${{ secrets.GITLAB_DEPLOY_TOKEN }}
+          GL_URL: ${{ vars.GITLAB_REPO_URL }}
+        run: |
+          set -euo pipefail
+          git push "https://${GL_USER}:${GL_TOKEN}@${GL_URL}" HEAD:refs/heads/main
