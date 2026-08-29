@@ -10,19 +10,20 @@ container. It exists for **Gcore Everywhere Inference**, a managed-container
 platform with no SSH / sidecar / node access — so observability must live *inside*
 the image. There is no application source tree; the repo is a Docker build context.
 
-Image path: `registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy:<tag>`
+Image path: `ghcr.io/infratailors/vllm-alloy:<tag>`
 
 ## Build & release
 
-- **CI publishes on git tags only** (`.gitlab-ci.yml`): the git tag name becomes
-  the image tag, built+pushed via the project's own CI job token (no cross-project
-  deploy token). `latest` is also pushed but is mutable — never reference it from
-  the webapp.
-  ```bash
-  git tag -a v0.11.0-alloy1.16.2-2 -m "rebuild"
-  git push origin v0.11.0-alloy1.16.2-2
-  ```
-- **Local/manual build:** `./build-push.sh` (override target with `IMAGE=...`).
+- **`./build-push.sh` is the only publish path.** There is no CI build: the
+  image sits on the multi-GB `vllm/vllm-openai` base and overruns a hosted
+  shared runner's disk. Requires `docker login ghcr.io` with a token carrying
+  `write:packages`. `latest` is pushed too but is mutable — never reference it
+  from the webapp.
+- **The GHCR package must be public.** Package visibility is independent of
+  repository visibility and a new package defaults to private, so this is a
+  one-time manual step after the first push. Gcore Everywhere Inference pulls
+  anonymously; a private package fails with a 403 that looks like a missing
+  image.
 - **Tag immutability is a hard rule:** never re-push an existing tag — Gcore does
   not re-pull an unchanged tag. Bump the trailing counter (`-2`, `-3`, …) on every
   rebuild and update the pinned tag in the webapp config

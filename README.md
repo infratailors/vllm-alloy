@@ -18,11 +18,17 @@ vLLM CLI entirely from the envs below.
 ## Image path
 
 ```
-registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy:<tag>
+ghcr.io/infratailors/vllm-alloy:<tag>
 ```
 
-The project is public, so Gcore (and anyone) can pull it anonymously — no
+The package is public, so Gcore (and anyone) can pull it anonymously — no
 registry credentials required.
+
+> GHCR package visibility is **independent of repository visibility**, and a
+> newly created package defaults to private even in a public repo. After the
+> first push, set it to public once under
+> [Packages → vllm-alloy → Package settings](https://github.com/orgs/infratailors/packages).
+> Until then an anonymous pull fails with a 403 that reads like a missing image.
 
 ## Environment contract
 
@@ -69,20 +75,25 @@ docker run --gpus all -p 8000:8000 \
   -e ALLOY_REMOTE_WRITE_URL=https://grafana.dev.infratailors.ai/api/v1/write \
   -e ALLOY_API_KEY=<token> \
   -e DEPLOYMENT_ID=local -e USER_ID=me -e PROJECT_ID=test \
-  registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy:<tag>
+  ghcr.io/infratailors/vllm-alloy:<tag>
 ```
 
 ## Building / publishing
 
-CI builds and publishes on **git tags** (`.gitlab-ci.yml`): the git tag name
-becomes the image tag. To cut a new image:
+`./build-push.sh` is the only publish path. There is deliberately no CI build:
+the image sits on the multi-GB `vllm/vllm-openai` base and overruns a hosted
+shared runner's disk, and it changes rarely enough that a deliberate local
+build+push is simpler and more reliable.
 
 ```bash
-git tag -a v0.11.0-alloy1.16.2-2 -m "rebuild"
-git push origin v0.11.0-alloy1.16.2-2
+echo "$GITHUB_PAT" | docker login ghcr.io -u <github-username> --password-stdin
+./build-push.sh                        # default tag, derived from the pinned versions
+./build-push.sh v0.11.0-alloy1.16.2-2  # or an explicit one
 ```
 
-For a local/manual build, use `./build-push.sh` (override `IMAGE=...`).
+Tags are immutable by convention and the script refuses to overwrite one: Gcore
+does not re-pull an unchanged tag, so bump the trailing counter on every rebuild
+and update `deployment.gcore_vllm_alloy_image` in the webapp.
 
 **Tag immutability:** never re-push the same tag — Gcore does not re-pull an
 unchanged tag. Bump the trailing counter on every rebuild and update the pinned
