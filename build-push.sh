@@ -2,9 +2,10 @@
 # build-push.sh — local build + push of the public vLLM+Alloy image.
 #
 # This is the PRIMARY publish path. CI-on-tag is impractical here because the
-# image builds on top of the multi-GB vllm/vllm-openai base, which overruns
-# GitLab SaaS shared-runner disk. The image changes rarely, so a deliberate
-# local build+push is the simplest reliable option.
+# image builds on top of the multi-GB vllm/vllm-openai base, which overruns a
+# hosted shared runner's disk (this was true of GitLab SaaS and GitHub-hosted
+# runners start from a comparable ~14GB). The image changes rarely, so a
+# deliberate local build+push is the simplest reliable option.
 #
 # Usage:
 #   ./build-push.sh                          # build+push the default tag below
@@ -19,7 +20,14 @@
 # This script refuses to overwrite a tag that already exists in the registry.
 set -euo pipefail
 
-REGISTRY_IMAGE="registry.gitlab.com/uniluxembourg/snt/sedan/infratailors.ai/vllm-alloy"
+# GitHub Container Registry. The package must be PUBLIC so the customer's Gcore
+# Everywhere Inference container can pull it anonymously -- no credentials_name
+# on their side. Note that a newly created GHCR package defaults to PRIVATE even
+# when its source repository is public: after the very first push, set it to
+# public once under
+# https://github.com/orgs/infratailors/packages -> vllm-alloy -> Package settings.
+# Skip that and the pull fails with a 403 that reads like "image not found".
+REGISTRY_IMAGE="ghcr.io/infratailors/vllm-alloy"
 
 # Versions pinned in the Dockerfile — keep these in sync with it (FROM line and
 # the ALLOY_VERSION arg). They form the default tag.
@@ -53,8 +61,10 @@ echo "  context: ${SCRIPT_DIR}"
 docker build --platform linux/amd64 -t "${IMAGE}" "${SCRIPT_DIR}"
 
 # --- Push --------------------------------------------------------------------
-# Requires a GitLab login with write_registry on this project:
-#   docker login registry.gitlab.com   (username + PAT/deploy token)
+# Requires a ghcr.io login with the write:packages scope:
+#   echo "$GITHUB_PAT" | docker login ghcr.io -u <github-username> --password-stdin
+# A classic PAT with write:packages works; so does a fine-grained token with
+# read+write on this repository's packages.
 echo "Pushing ${IMAGE}"
 docker push "${IMAGE}"
 
@@ -66,7 +76,7 @@ fi
 
 echo
 echo "Done: ${IMAGE}"
-echo "Verify anonymous pull (project is public):"
+echo "Verify anonymous pull (package must be public -- see the note at the top):"
 echo "  docker pull ${IMAGE}"
 echo
 echo "Then pin this exact tag in the webapp: deployment.gcore_vllm_alloy_image"
