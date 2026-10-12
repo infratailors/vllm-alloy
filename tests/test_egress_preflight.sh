@@ -86,8 +86,8 @@ cat > "${STUB_DIR}/proc" <<'STUB'
 if [[ "$1" == run ]]; then
   # STOP_DELAY: seconds to "drain" after the first TERM; later TERMs ignored.
   stopping=0
-  trap '[[ ${stopping} -eq 1 ]] && return; stopping=1; kill "$!" 2>/dev/null
-        sleep "${STOP_DELAY:-0}"; echo "STOPPED $2"; exit 0' TERM
+  trap '[[ ${stopping} -eq 1 ]] || { stopping=1; kill "$!" 2>/dev/null
+        sleep "${STOP_DELAY:-0}"; echo "STOPPED $2"; exit 0; }' TERM
   sleep 30 & wait; exit 99
 fi
 [[ "$2" == vllm ]] && echo VLLM_STARTED

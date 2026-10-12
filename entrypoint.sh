@@ -73,7 +73,10 @@ if [[ ${TERMINATING} -eq 1 ]]; then
   # TERM. Let them finish and exit with vLLM's code. A repeated signal
   # interrupts `wait` (it returns >128 with vLLM still draining), so loop
   # until vLLM is gone, then collect its code.
-  while kill -0 "${VLLM_PID}" 2>/dev/null; do wait "${VLLM_PID}" 2>/dev/null || true; done
+  # (127: no such child, e.g. the PID was reused by another process.)
+  while kill -0 "${VLLM_PID}" 2>/dev/null; do
+    wait "${VLLM_PID}" 2>/dev/null || [[ $? -ne 127 ]] || break
+  done
   wait "${VLLM_PID}" 2>/dev/null || rc=$?
   wait "${ALLOY_PID}" 2>/dev/null || true
   echo "entrypoint: terminated by signal; vLLM exited (code ${rc})." >&2
