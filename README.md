@@ -96,7 +96,9 @@ the HuggingFace cache, or `HF_HUB_OFFLINE`, still works. When `HF_HUB_OFFLINE`
 is set (`1`, `true`, `yes` or `on`) the HuggingFace check is skipped.
 
 If only one host fails (`..., although other hosts resolve`), the network is
-fine and that hostname is wrong: check the deployment's env.
+fine and that hostname is wrong: check the deployment's env. When only one host is
+checked (for example `HF_HUB_OFFLINE` set), there is nothing to compare with,
+so a mistyped hostname also reads as a network problem.
 
 ## Tests
 

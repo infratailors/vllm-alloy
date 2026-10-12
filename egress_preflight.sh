@@ -25,12 +25,16 @@ egress_preflight() {
        [[ -z "${host}" ]] || hosts+=("${host}") ;;
   esac
   host="$(url_host "${ALLOY_REMOTE_WRITE_URL:-}")"
-  [[ -z "${host}" ]] || hosts+=("${host}")
+  [[ -z "${host}" || " ${hosts[*]} " == *" ${host} "* ]] || hosts+=("${host}")
+
+  # A malformed cap would make `timeout` fail every lookup: a false alarm.
+  local cap="${PREFLIGHT_TIMEOUT_SECONDS:-10}"
+  [[ "${cap}" =~ ^[1-9][0-9]*$ ]] || cap=10
 
   for host in "${hosts[@]}"; do
     # A broken resolver can stall each lookup for ~20s; cap it so a pod
     # without DNS doesn't also start late.
-    timeout "${PREFLIGHT_TIMEOUT_SECONDS:-10}" getent hosts "${host}" >/dev/null 2>&1 \
+    timeout "${cap}" getent hosts "${host}" >/dev/null 2>&1 \
       || failed+=("${host}")
   done
 
