@@ -11,15 +11,16 @@
 # a single published image serves every model. See README.md for the full env
 # contract.
 #
-# Build:
-#   docker build -t ghcr.io/infratailors/vllm-alloy:<tag> .
-# Push:
-#   docker push  ghcr.io/infratailors/vllm-alloy:<tag>
+# Build + push (multi-arch, linux/amd64 + linux/arm64): ./build-push.sh <tag>
+# Local single-platform build: docker build --platform linux/arm64 -t <name> .
 FROM vllm/vllm-openai:v0.11.0
 
-# Pin Alloy; the linux-amd64 zip asset naming is stable across the 1.x line.
+# Pin Alloy; the alloy-linux-<arch> zip asset naming is stable across 1.x.
 ARG ALLOY_VERSION=1.16.2
-ARG TARGETARCH=amd64
+# Set by BuildKit to the platform being built (amd64 / arm64). No default: a
+# default here overrides BuildKit's value, so an arm64 build would install the
+# amd64 Alloy binary. Requires BuildKit (Docker's default builder since 23.0).
+ARG TARGETARCH
 
 USER root
 RUN set -eux; \

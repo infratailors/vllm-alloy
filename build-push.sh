@@ -13,10 +13,17 @@
 #   TAG=v0.11.0-alloy1.16.2-2 ./build-push.sh  # same, via env
 #   PUSH_LATEST=0 ./build-push.sh            # skip updating the :latest pointer
 #   FORCE=1 ./build-push.sh <existing-tag>   # override the immutability guard
+#   PLATFORMS=linux/amd64 ./build-push.sh    # build only some platforms
+#
+# PLATFORMS: the image is multi-arch by default (linux/amd64 + linux/arm64, the
+# two platforms the vllm/vllm-openai base ships), pushed as ONE tag so each host
+# pulls its own architecture. It builds from an x86_64 or an ARM host alike:
+# the host's own platform builds natively and the other needs QEMU emulation
+# (the script checks before building and says how to enable it).
 #
 # IMMUTABILITY: never re-push an existing tag — Gcore does not re-pull an
 # unchanged tag. Bump the trailing counter (-2, -3, …) on every rebuild and
-# update the pinned tag in the webapp (deployment.gcore_vllm_alloy_image).
+# update the pinned tag in the webapp (deployment.vllm_alloy_image).
 # This script refuses to overwrite a tag that already exists in the registry.
 set -euo pipefail
 
@@ -55,30 +62,61 @@ if docker manifest inspect "${IMAGE}" >/dev/null 2>&1; then
   echo "WARNING: ${IMAGE} exists; FORCE=1 set — overwriting." >&2
 fi
 
-# --- Build (amd64-only: vLLM base + Alloy asset are x86) ----------------------
-echo "Building ${IMAGE}"
-echo "  context: ${SCRIPT_DIR}"
-docker build --platform linux/amd64 -t "${IMAGE}" "${SCRIPT_DIR}"
+# --- Builder -----------------------------------------------------------------
+# A multi-platform push needs a BuildKit builder with the docker-container
+# driver; Docker's default builder can only build the host's own platform.
+PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
+BUILDER="${BUILDER:-vllm-alloy}"
+if ! docker buildx inspect "${BUILDER}" >/dev/null 2>&1; then
+  echo "Creating buildx builder ${BUILDER}"
+  docker buildx create --name "${BUILDER}" --driver docker-container >/dev/null
+fi
 
-# --- Push --------------------------------------------------------------------
+# Fail fast if the builder cannot run a requested platform. Without this, a
+# foreign platform with no QEMU emulation dies mid-build with
+# "exec /bin/bash: exec format error".
+# "Platforms:" lists e.g. "linux/arm64, linux/amd64*" (* = set by the user).
+supported="$(docker buildx inspect --bootstrap "${BUILDER}" | sed -n 's/^Platforms:[[:space:]]*//p')"
+supported="${supported//\*/}"
+missing=()
+IFS=',' read -ra wanted <<< "${PLATFORMS}"
+for platform in "${wanted[@]}"; do
+  [[ ",${supported// /}," == *",${platform},"* ]] || missing+=("${platform}")
+done
+if [ "${#missing[@]}" -gt 0 ]; then
+  echo "ERROR: builder ${BUILDER} cannot build: ${missing[*]} (it supports: ${supported})." >&2
+  echo "Enable QEMU emulation for the missing architecture(s), then recreate the builder:" >&2
+  for platform in "${missing[@]}"; do
+    echo "  docker run --privileged --rm tonistiigi/binfmt --install ${platform#linux/}" >&2
+  done
+  echo "  docker buildx rm ${BUILDER}" >&2
+  echo "Or build only what this host can: PLATFORMS=<platforms> ./build-push.sh" >&2
+  exit 1
+fi
+
+# --- Build + push --------------------------------------------------------------
 # Requires a ghcr.io login with the write:packages scope:
 #   echo "$GITHUB_PAT" | docker login ghcr.io -u <github-username> --password-stdin
 # A classic PAT with write:packages works; so does a fine-grained token with
-# read+write on this repository's packages.
-echo "Pushing ${IMAGE}"
-docker push "${IMAGE}"
-
+# read+write on this repository's packages. buildx pushes straight from the
+# builder: a multi-platform image cannot be loaded into the local image store.
+tags=(-t "${IMAGE}")
 if [ "${PUSH_LATEST}" = "1" ]; then
-  echo "Updating mutable pointer ${REGISTRY_IMAGE}:latest"
-  docker tag "${IMAGE}" "${REGISTRY_IMAGE}:latest"
-  docker push "${REGISTRY_IMAGE}:latest"
+  tags+=(-t "${REGISTRY_IMAGE}:latest")
 fi
+echo "Building and pushing ${IMAGE} for ${PLATFORMS}"
+echo "  context: ${SCRIPT_DIR}"
+docker buildx build --builder "${BUILDER}" --platform "${PLATFORMS}" \
+  "${tags[@]}" --push "${SCRIPT_DIR}"
 
+echo
+echo "Pushed platforms:"
+docker buildx imagetools inspect "${IMAGE}" | sed -n 's/^ *Platform: */  /p'
 echo
 echo "Done: ${IMAGE}"
 echo "Verify anonymous pull (package must be public -- see the note at the top):"
 echo "  docker pull ${IMAGE}"
 echo
-echo "Then pin this exact tag in the webapp: deployment.gcore_vllm_alloy_image"
+echo "Then pin this exact tag in the webapp: deployment.vllm_alloy_image"
 echo "A public image needs no Gcore registry credentials; a private one needs a"
 echo "registry_credentials object referenced via credentials_name in terraform.tfvars."

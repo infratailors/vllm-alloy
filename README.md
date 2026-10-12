@@ -106,8 +106,13 @@ so a mistyped hostname also reads as a network problem.
 bash tests/test_egress_preflight.sh
 ```
 
-The tests stub `getent`, `alloy` and `python3`, so they need no network, no GPU
-and no image build. The last one runs the real `entrypoint.sh`.
+```bash
+bash tests/test_build_push.sh
+```
+
+The tests stub `getent`, `alloy`, `python3` and `docker`, so they need no
+network, no GPU, no Docker daemon and no image build. The entrypoint tests run
+the real `entrypoint.sh`.
 
 ## Building / publishing
 
@@ -122,10 +127,41 @@ echo "$GITHUB_PAT" | docker login ghcr.io -u <github-username> --password-stdin
 ./build-push.sh v0.11.0-alloy1.16.2-2  # or an explicit one
 ```
 
+### Platforms
+
+One tag carries both `linux/amd64` and `linux/arm64` (the two platforms the
+`vllm/vllm-openai` base ships), so x86_64 and ARM GPU hosts each pull their own
+architecture.
+
+The arm64 variant inherits upstream vLLM's arm64 build, which targets ARM
+data-center GPUs such as Grace Hopper (GH200); this image has not yet been run on
+one. It is **not** expected to run on DGX Spark (GB10): that needs NVIDIA's NGC
+vLLM image for its CUDA 13 runtime, and its unified memory gives the GPU
+exporter no framebuffer memory to report. The webapp's Fit launcher uses NGC's
+image there.
+
+The script builds with `docker buildx` and a `docker-container`
+builder named `vllm-alloy`, which it creates on first use.
+
+It runs on an x86_64 or an ARM machine. The machine's own platform builds
+natively; the other needs QEMU emulation. The script checks this before
+building and, if a platform is missing, prints the fix:
+
+```bash
+docker run --privileged --rm tonistiigi/binfmt --install amd64   # or arm64
+docker buildx rm vllm-alloy                                      # recreated on the next run
+```
+
+That registration does not survive a reboot unless the host also has
+`qemu-user-static` and `binfmt-support` installed. To skip emulation, build only
+the native platform, e.g. `PLATFORMS=linux/arm64 ./build-push.sh <tag>`; but a
+tag pushed that way lacks the other architecture, and tags are immutable, so
+prefer a full build.
+
 Tags are immutable by convention and the script refuses to overwrite one: Gcore
 does not re-pull an unchanged tag, so bump the trailing counter on every rebuild
-and update `deployment.gcore_vllm_alloy_image` in the webapp.
+and update `deployment.vllm_alloy_image` in the webapp.
 
 **Tag immutability:** never re-push the same tag — Gcore does not re-pull an
 unchanged tag. Bump the trailing counter on every rebuild and update the pinned
-tag in the webapp (`deployment.gcore_vllm_alloy_image`) deliberately.
+tag in the webapp (`deployment.vllm_alloy_image`) deliberately.
