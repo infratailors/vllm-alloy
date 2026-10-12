@@ -19,6 +19,12 @@ Image path: `ghcr.io/infratailors/vllm-alloy:<tag>`
   shared runner's disk. Requires `docker login ghcr.io` with a token carrying
   `write:packages`. `latest` is pushed too but is mutable — never reference it
   from the webapp.
+- **Every tag is multi-arch** (`linux/amd64` + `linux/arm64`, via `docker buildx`).
+  Never hard-code an architecture in the Dockerfile: per-arch downloads use
+  BuildKit's `TARGETARCH`. The build host's own platform builds natively and the
+  other needs QEMU emulation; `build-push.sh` checks before building. Narrowing
+  with `PLATFORMS` produces a tag that lacks an architecture, so do it only for
+  local testing.
 - **The GHCR package must be public.** Package visibility is independent of
   repository visibility and a new package defaults to private, so this is a
   one-time manual step after the first push. Gcore Everywhere Inference pulls
@@ -27,7 +33,7 @@ Image path: `ghcr.io/infratailors/vllm-alloy:<tag>`
 - **Tag immutability is a hard rule:** never re-push an existing tag — Gcore does
   not re-pull an unchanged tag. Bump the trailing counter (`-2`, `-3`, …) on every
   rebuild and update the pinned tag in the webapp config
-  (`deployment.gcore_vllm_alloy_image`) deliberately.
+  (`deployment.vllm_alloy_image`) deliberately.
 
 ## Architecture (spans multiple files)
 
@@ -59,7 +65,7 @@ remove them. See README.md for the full env table (runtime + observability label
 ## Coordination with the webapp
 
 This image is consumed by the separate webapp repo, which pins one immutable tag in
-`deployment.gcore_vllm_alloy_image` and injects the env contract at deploy time. The
+`deployment.vllm_alloy_image` and injects the env contract at deploy time. The
 env var names here (`MODEL_NAME`, `VLLM_TASK`, `MAX_MODEL_LEN`, `GPU_MEM_UTIL`,
 `DTYPE`, `EXTRA_VLLM_ARGS`, `ALLOY_*`, `DEPLOYMENT_ID`, `USER_ID`, `PROJECT_ID`,
 `CLOUD_PROVIDER`, `INSTANCE_TYPE`) are a contract with that webapp — renaming one is
