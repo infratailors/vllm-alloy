@@ -84,7 +84,10 @@ cp "${ROOT}/entrypoint.sh" "${ROOT}/egress_preflight.sh" "${BIN_DIR}/"
 cat > "${STUB_DIR}/proc" <<'STUB'
 #!/usr/bin/env bash
 if [[ "$1" == run ]]; then
-  trap 'kill "$!" 2>/dev/null; echo "STOPPED $2"; exit 0' TERM
+  # STOP_DELAY: seconds to "drain" after the first TERM; later TERMs ignored.
+  stopping=0
+  trap '[[ ${stopping} -eq 1 ]] && return; stopping=1; kill "$!" 2>/dev/null
+        sleep "${STOP_DELAY:-0}"; echo "STOPPED $2"; exit 0' TERM
   sleep 30 & wait; exit 99
 fi
 [[ "$2" == vllm ]] && echo VLLM_STARTED
@@ -133,5 +136,14 @@ out="$(cat "${log}")"
 [[ ${rc} -eq 0 && "${out}" == *"terminated by signal; vLLM exited (code 0)"* \
    && "${out}" != *"Alloy exited unexpectedly"* ]]
 check "SIGTERM is reported as a shutdown, not an Alloy failure" $?
+
+# A second SIGTERM while vLLM drains must not cut the shutdown short.
+env -i PATH="${STUB_DIR}:${PATH}" RESOLVABLE="huggingface.co" STOP_DELAY=2 \
+  bash "${BIN_DIR}/entrypoint.sh" > "${log}" 2>&1 &
+pid=$!
+sleep 1; kill -TERM "${pid}"; sleep 0.5; kill -TERM "${pid}"; rc=0; wait "${pid}" || rc=$?
+out="$(cat "${log}")"
+[[ "${out}" == *"STOPPED vllm"* && "${out}" == *"terminated by signal; vLLM exited (code 0)"* ]]
+check "a second SIGTERM waits for vLLM to finish draining" $?
 
 exit "${failures}"
