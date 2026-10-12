@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tests for egress_preflight.sh. Hermetic: a stub `getent` on PATH decides which
 # hosts resolve, so no real DNS is touched. Run: bash tests/test_egress_preflight.sh
-set -euo pipefail
+# No -e: a false assertion must reach check() and print FAIL, not abort.
+set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STUB_DIR="$(mktemp -d)"
@@ -60,6 +61,12 @@ done
 out="$(run RESOLVABLE="huggingface.co" ALLOY_REMOTE_WRITE_URL="")"
 [[ -z "${out}" ]]; check "empty remote-write URL is skipped" $?
 
+out="$(run RESOLVABLE="" HF_ENDPOINT=https://hub.example.com ALLOY_REMOTE_WRITE_URL=https://hub.example.com/write)"
+[[ "${out}" == *"cannot resolve hub.example.com."* ]]; check "a host shared by both URLs is checked once" $?
+
+out="$(run RESOLVABLE="huggingface.co" PREFLIGHT_TIMEOUT_SECONDS=abc)"
+[[ -z "${out}" ]]; check "a malformed timeout falls back instead of failing every lookup" $?
+
 start=${SECONDS}
 out="$(run RESOLVABLE="" HANG=1 PREFLIGHT_TIMEOUT_SECONDS=1)"
 [[ $((SECONDS - start)) -lt 10 && "${out}" == *"cannot resolve huggingface.co"* ]]
@@ -87,5 +94,22 @@ rc=0
 out="$(env -i PATH="${STUB_DIR}:${PATH}" RESOLVABLE="" bash "${BIN_DIR}/entrypoint.sh" 2>&1)" || rc=$?
 [[ ${rc} -eq 0 && "${out}" == *"PREFLIGHT FAILED"* && "${out}" == *"VLLM_STARTED"* ]]
 check "entrypoint.sh sources the preflight and still starts vLLM" $?
+
+# Regression: a vLLM that exits non-zero (the #338 crash loop) must still get
+# the exit log line and a clean Alloy shutdown, with vLLM's code propagated.
+cat > "${STUB_DIR}/python3" <<'STUB'
+#!/usr/bin/env bash
+[[ "$*" == *gpu_exporter* ]] && exit 0
+exit 3
+STUB
+cat > "${STUB_DIR}/alloy" <<'STUB'
+#!/usr/bin/env bash
+trap 'echo ALLOY_STOPPED; kill "$!"; exit 0' TERM
+sleep 30 & wait
+STUB
+rc=0
+out="$(env -i PATH="${STUB_DIR}:${PATH}" RESOLVABLE="huggingface.co" bash "${BIN_DIR}/entrypoint.sh" 2>&1)" || rc=$?
+[[ ${rc} -eq 3 && "${out}" == *"vLLM exited (code 3)"* && "${out}" == *"ALLOY_STOPPED"* ]]
+check "a failing vLLM is logged, stops Alloy, and propagates its exit code" $?
 
 exit "${failures}"

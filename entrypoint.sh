@@ -56,11 +56,14 @@ term_handler() {
 trap term_handler SIGTERM SIGINT
 
 # --- Wait for whichever child exits first -----------------------------------
-wait -n "${VLLM_PID}" "${ALLOY_PID}"
+# `wait -n` returns the exiting child's code; capture it rather than let a
+# non-zero code trip `set -e` and skip the cleanup below. (Waiting on the
+# vLLM PID again after `wait -n` has reaped it would not return its code.)
+rc=0
+wait -n "${VLLM_PID}" "${ALLOY_PID}" || rc=$?
 
 if ! kill -0 "${VLLM_PID}" 2>/dev/null; then
   # vLLM exited — propagate its real code and stop Alloy.
-  wait "${VLLM_PID}"; rc=$?
   echo "entrypoint: vLLM exited (code ${rc}); stopping Alloy and container." >&2
   kill -TERM "${ALLOY_PID}" 2>/dev/null || true
   wait "${ALLOY_PID}" 2>/dev/null || true
