@@ -76,40 +76,62 @@ check "a stalled lookup is capped and reported" $?
 run RESOLVABLE="" >/dev/null; check "returns 0 when lookups fail" $?
 
 # End to end: run the real entrypoint.sh, as the Dockerfile lays it out
-# (egress_preflight.sh next to it), with alloy / python3 stubbed. Proves the
-# source line works and that vLLM still starts after a failed preflight.
+# (egress_preflight.sh next to it), with alloy / python3 stubbed by `proc`:
+# "<delay>:<code>" sleeps then exits with code; "run" sleeps until TERM, then
+# exits 0. VLLM / ALLOY pick each stub's behaviour.
 BIN_DIR="${STUB_DIR}/bin"; mkdir -p "${BIN_DIR}"
 cp "${ROOT}/entrypoint.sh" "${ROOT}/egress_preflight.sh" "${BIN_DIR}/"
+cat > "${STUB_DIR}/proc" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == run ]]; then
+  trap 'kill "$!" 2>/dev/null; echo "STOPPED $2"; exit 0' TERM
+  sleep 30 & wait; exit 99
+fi
+[[ "$2" == vllm ]] && echo VLLM_STARTED
+sleep "${1%%:*}"; exit "${1##*:}"
+STUB
 cat > "${STUB_DIR}/alloy" <<'STUB'
 #!/usr/bin/env bash
-exec sleep 30
+exec "$(dirname "$0")/proc" "${ALLOY:-run}" alloy
 STUB
 cat > "${STUB_DIR}/python3" <<'STUB'
 #!/usr/bin/env bash
 [[ "$*" == *gpu_exporter* ]] && exit 0  # best-effort; outside the wait set
-echo "VLLM_STARTED"
+exec "$(dirname "$0")/proc" "${VLLM:-run}" vllm
 STUB
-chmod +x "${STUB_DIR}/alloy" "${STUB_DIR}/python3"
-rc=0
-out="$(env -i PATH="${STUB_DIR}:${PATH}" RESOLVABLE="" bash "${BIN_DIR}/entrypoint.sh" 2>&1)" || rc=$?
+chmod +x "${STUB_DIR}/proc" "${STUB_DIR}/alloy" "${STUB_DIR}/python3"
+entry() {  # entry <env...>: sets out and rc
+  rc=0
+  out="$(env -i PATH="${STUB_DIR}:${PATH}" "$@" bash "${BIN_DIR}/entrypoint.sh" 2>&1)" || rc=$?
+}
+
+entry RESOLVABLE="" VLLM=1:0
 [[ ${rc} -eq 0 && "${out}" == *"PREFLIGHT FAILED"* && "${out}" == *"VLLM_STARTED"* ]]
 check "entrypoint.sh sources the preflight and still starts vLLM" $?
 
 # Regression: a vLLM that exits non-zero (the #338 crash loop) must still get
 # the exit log line and a clean Alloy shutdown, with vLLM's code propagated.
-cat > "${STUB_DIR}/python3" <<'STUB'
-#!/usr/bin/env bash
-[[ "$*" == *gpu_exporter* ]] && exit 0
-exit 3
-STUB
-cat > "${STUB_DIR}/alloy" <<'STUB'
-#!/usr/bin/env bash
-trap 'echo ALLOY_STOPPED; kill "$!"; exit 0' TERM
-sleep 30 & wait
-STUB
-rc=0
-out="$(env -i PATH="${STUB_DIR}:${PATH}" RESOLVABLE="huggingface.co" bash "${BIN_DIR}/entrypoint.sh" 2>&1)" || rc=$?
-[[ ${rc} -eq 3 && "${out}" == *"vLLM exited (code 3)"* && "${out}" == *"ALLOY_STOPPED"* ]]
+entry RESOLVABLE="huggingface.co" VLLM=1:3
+[[ ${rc} -eq 3 && "${out}" == *"vLLM exited (code 3)"* && "${out}" == *"STOPPED alloy"* ]]
 check "a failing vLLM is logged, stops Alloy, and propagates its exit code" $?
+
+entry RESOLVABLE="huggingface.co" VLLM=0:3
+[[ ${rc} -eq 3 && "${out}" == *"vLLM exited (code 3)"* ]]
+check "a vLLM that exits before the wait starts is still reported" $?
+
+entry RESOLVABLE="huggingface.co" ALLOY=1:2
+[[ ${rc} -eq 1 && "${out}" == *"Alloy exited unexpectedly"* && "${out}" == *"STOPPED vllm"* ]]
+check "Alloy dying first stops vLLM and exits 1" $?
+
+# The platform stopping the container is not an Alloy failure.
+log="${STUB_DIR}/term.log"
+env -i PATH="${STUB_DIR}:${PATH}" RESOLVABLE="huggingface.co" \
+  bash "${BIN_DIR}/entrypoint.sh" > "${log}" 2>&1 &
+pid=$!
+sleep 1; kill -TERM "${pid}"; rc=0; wait "${pid}" || rc=$?
+out="$(cat "${log}")"
+[[ ${rc} -eq 0 && "${out}" == *"terminated by signal; vLLM exited (code 0)"* \
+   && "${out}" != *"Alloy exited unexpectedly"* ]]
+check "SIGTERM is reported as a shutdown, not an Alloy failure" $?
 
 exit "${failures}"
