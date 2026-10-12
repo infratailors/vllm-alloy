@@ -19,10 +19,14 @@ case "$1 $2" in
   "buildx inspect")
     if [[ "$3" == --bootstrap ]]; then
       printf 'Name: x\nDriver: docker-container\nPlatforms:             %s\n' "${HOST_PLATFORMS}"
+      # SECOND_NODE: a second builder node with its own Platforms line.
+      [[ -z "${SECOND_NODE:-}" ]] || printf 'Name: y\nPlatforms:             %s\n' "${SECOND_NODE}"
     else
       [[ "${BUILDER_EXISTS:-1}" == 1 ]]
     fi ;;
-  "buildx imagetools") printf '  Platform:  linux/amd64\n  Platform:  linux/arm64\n' ;;
+  "buildx imagetools")
+    [[ "${INSPECT_FAILS:-0}" == 1 ]] && { echo "denied" >&2; exit 1; }
+    printf '  Platform:  linux/amd64\n  Platform:  linux/arm64\n  Platform:  unknown/unknown\n' ;;
   *) exit 0 ;;
 esac
 STUB
@@ -55,9 +59,10 @@ run HOST_PLATFORMS="linux/amd64, linux/386"
 # Both platforms available (* marks are tolerated): one multi-arch push.
 run HOST_PLATFORMS="linux/amd64*, linux/arm64, linux/386"
 [[ ${rc} -eq 0 ]]; check "builds when every platform is available" $?
-[[ "${calls}" == *"buildx build --builder vllm-alloy --platform linux/amd64,linux/arm64 -t ${IMG}:v-test -t ${IMG}:latest --push "* ]]
+[[ "${calls}" == *"buildx build --builder vllm-alloy --platform linux/amd64,linux/arm64 --provenance=false -t ${IMG}:v-test -t ${IMG}:latest --push "* ]]
 check "one buildx push for both platforms, with :latest" $?
-[[ "${out}" == *"linux/amd64"*"linux/arm64"* ]]; check "reports the pushed platforms" $?
+[[ "${out}" == *"linux/amd64"*"linux/arm64"* && "${out}" != *"unknown/unknown"* ]]
+check "reports the pushed platforms, without attestation entries" $?
 
 # One platform only, e.g. no emulation wanted.
 run HOST_PLATFORMS="linux/arm64" PLATFORMS=linux/arm64
@@ -69,6 +74,19 @@ run HOST_PLATFORMS="linux/amd64, linux/arm64" PUSH_LATEST=0
 run HOST_PLATFORMS="linux/amd64, linux/arm64" BUILDER_EXISTS=0
 [[ "${calls}" == *"buildx create --name vllm-alloy --driver docker-container"* ]]
 check "creates the builder when it is missing" $?
+
+# A builder with one native node per architecture (no QEMU needed).
+run HOST_PLATFORMS="linux/amd64, linux/amd64/v2" SECOND_NODE="linux/arm64, linux/arm/v7"
+[[ ${rc} -eq 0 && "${calls}" == *"buildx build"* ]]; check "a multi-node builder's platforms are combined" $?
+
+run HOST_PLATFORMS="linux/amd64, linux/arm64" PLATFORMS="linux/amd64, linux/arm64"
+[[ ${rc} -eq 0 && "${calls}" == *"--platform linux/amd64,linux/arm64 "* ]]
+check "spaces in PLATFORMS are tolerated" $?
+
+# A failed read-back after a successful push must not hide the summary.
+run HOST_PLATFORMS="linux/amd64, linux/arm64" INSPECT_FAILS=1
+[[ ${rc} -eq 0 && "${out}" == *"could not read back"* && "${out}" == *"Done:"* ]]
+check "a failed read-back still prints the summary and exits 0" $?
 
 # A platform name that is a prefix of a supported one must not match.
 run HOST_PLATFORMS="linux/arm64/v8" PLATFORMS=linux/arm64

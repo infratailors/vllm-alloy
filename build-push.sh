@@ -75,13 +75,18 @@ fi
 # Fail fast if the builder cannot run a requested platform. Without this, a
 # foreign platform with no QEMU emulation dies mid-build with
 # "exec /bin/bash: exec format error".
-# "Platforms:" lists e.g. "linux/arm64, linux/amd64*" (* = set by the user).
-supported="$(docker buildx inspect --bootstrap "${BUILDER}" | sed -n 's/^Platforms:[[:space:]]*//p')"
+# Each node prints "Platforms:" with e.g. "linux/arm64, linux/amd64*" (* = set
+# by the user); a builder may have several nodes (say one x86, one ARM), so
+# join every node's list.
+supported="$(docker buildx inspect --bootstrap "${BUILDER}" \
+  | sed -n 's/^Platforms:[[:space:]]*//p' | paste -sd, -)"
 supported="${supported//\*/}"
+supported="${supported// /}"
+PLATFORMS="${PLATFORMS// /}"
 missing=()
 IFS=',' read -ra wanted <<< "${PLATFORMS}"
 for platform in "${wanted[@]}"; do
-  [[ ",${supported// /}," == *",${platform},"* ]] || missing+=("${platform}")
+  [[ ",${supported}," == *",${platform},"* ]] || missing+=("${platform}")
 done
 if [ "${#missing[@]}" -gt 0 ]; then
   echo "ERROR: builder ${BUILDER} cannot build: ${missing[*]} (it supports: ${supported})." >&2
@@ -100,6 +105,8 @@ fi
 # A classic PAT with write:packages works; so does a fine-grained token with
 # read+write on this repository's packages. buildx pushes straight from the
 # builder: a multi-platform image cannot be loaded into the local image store.
+# --provenance=false: no attestation manifests (they show up as
+# "unknown/unknown" platforms in the index); nothing here consumes them.
 tags=(-t "${IMAGE}")
 if [ "${PUSH_LATEST}" = "1" ]; then
   tags+=(-t "${REGISTRY_IMAGE}:latest")
@@ -107,11 +114,16 @@ fi
 echo "Building and pushing ${IMAGE} for ${PLATFORMS}"
 echo "  context: ${SCRIPT_DIR}"
 docker buildx build --builder "${BUILDER}" --platform "${PLATFORMS}" \
-  "${tags[@]}" --push "${SCRIPT_DIR}"
+  --provenance=false "${tags[@]}" --push "${SCRIPT_DIR}"
 
 echo
 echo "Pushed platforms:"
-docker buildx imagetools inspect "${IMAGE}" | sed -n 's/^ *Platform: */  /p'
+# Informational only: the push already succeeded, so a failed read here must
+# not hide the "Done" summary and the pinning reminder below.
+if ! pushed="$(docker buildx imagetools inspect "${IMAGE}" 2>&1)"; then
+  pushed="  (could not read back the index: ${pushed})"
+fi
+sed -n 's/^ *Platform: */  /p' <<< "${pushed}" | grep -v 'unknown/unknown' || echo "${pushed}"
 echo
 echo "Done: ${IMAGE}"
 echo "Verify anonymous pull (package must be public -- see the note at the top):"
