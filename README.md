@@ -44,6 +44,7 @@ registry credentials required.
 | `EXTRA_VLLM_ARGS` | _(empty)_ | Space-separated extra CLI flags appended verbatim (e.g. `--enforce-eager`) |
 | `LISTEN_PORT` | `8000` | Port vLLM binds; also the container's service port |
 | `HUGGING_FACE_HUB_TOKEN` | _(unset)_ | HF token for gated/private models (read by vLLM) |
+| `PREFLIGHT_TIMEOUT_SECONDS` | `5` | Cap on each startup DNS check (see Troubleshooting) |
 
 `DTYPE` and `EXTRA_VLLM_ARGS` are the only channel for per-architecture quirks
 (e.g. `--dtype bfloat16`, Turing sampler flags) because `command` is omitted.
@@ -77,6 +78,29 @@ docker run --gpus all -p 8000:8000 \
   -e DEPLOYMENT_ID=local -e USER_ID=me -e PROJECT_ID=test \
   ghcr.io/infratailors/vllm-alloy:<tag>
 ```
+
+## Troubleshooting
+
+**`entrypoint: PREFLIGHT FAILED: cannot resolve huggingface.co`**
+
+Before starting vLLM, the entrypoint checks that `huggingface.co` and the
+`ALLOY_REMOTE_WRITE_URL` host resolve (`egress_preflight.sh`). This line means
+the container has no working DNS or outbound network. That is a problem in the
+provider's network, not in this image: vLLM will fail to download the model and
+exit, and the provider will restart the container. Deploy to another region, or
+raise it with the provider.
+
+The check only logs. It never stops vLLM from starting, so a model already in
+the HuggingFace cache, or `HF_HUB_OFFLINE=1`, still works. With
+`HF_HUB_OFFLINE=1` the `huggingface.co` check is skipped.
+
+## Tests
+
+```bash
+bash tests/test_egress_preflight.sh
+```
+
+The tests stub `getent`, so they need no network and no GPU.
 
 ## Building / publishing
 

@@ -35,7 +35,7 @@ RUN set -eux; \
     alloy --version
 
 COPY alloy/config.alloy /etc/alloy/config.alloy
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY entrypoint.sh egress_preflight.sh /usr/local/bin/
 COPY gpu_exporter.py /usr/local/bin/gpu_exporter.py
 # pynvml (nvidia-ml-py) ships with vLLM, but pin it so the GPU exporter never
 # breaks if the base image drops it. No GPU needed at build time.

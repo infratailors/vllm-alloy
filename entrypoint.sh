@@ -28,6 +28,11 @@ ALLOY_PID=$!
 python3 /usr/local/bin/gpu_exporter.py &
 GPU_PID=$!
 
+# --- Egress preflight (diagnostic only; see egress_preflight.sh) -------------
+# shellcheck source=egress_preflight.sh
+source "$(dirname "$0")/egress_preflight.sh"
+egress_preflight
+
 # --- vLLM (background, but health-determining) -------------------------------
 # Split EXTRA_VLLM_ARGS into an array so each flag is its own argv entry.
 read -ra EXTRA_ARGS <<< "${EXTRA_VLLM_ARGS:-}"
