@@ -26,6 +26,8 @@ case "$1 $2" in
     fi ;;
   "buildx imagetools")
     [[ "${INSPECT_FAILS:-0}" == 1 ]] && { echo "denied" >&2; exit 1; }
+    # A one-platform push is a plain manifest: no Platform lines.
+    [[ "${SINGLE_MANIFEST:-0}" == 1 ]] && { printf 'Name: x\nMediaType: application/vnd.oci.image.manifest.v1+json\nDigest: sha256:abc\n'; exit 0; }
     printf '  Platform:  linux/amd64\n  Platform:  linux/arm64\n  Platform:  unknown/unknown\n' ;;
   *) exit 0 ;;
 esac
@@ -87,6 +89,10 @@ check "spaces in PLATFORMS are tolerated" $?
 run HOST_PLATFORMS="linux/amd64, linux/arm64" INSPECT_FAILS=1
 [[ ${rc} -eq 0 && "${out}" == *"could not read back"* && "${out}" == *"Done:"* ]]
 check "a failed read-back still prints the summary and exits 0" $?
+
+run HOST_PLATFORMS="linux/arm64" PLATFORMS=linux/arm64 SINGLE_MANIFEST=1
+[[ ${rc} -eq 0 && "${out}" == *"Pushed platforms:"$'\n'"  linux/arm64"* && "${out}" != *"MediaType"* ]]
+check "a one-platform push reports its platform, not the raw manifest" $?
 
 # A platform name that is a prefix of a supported one must not match.
 run HOST_PLATFORMS="linux/arm64/v8" PLATFORMS=linux/arm64

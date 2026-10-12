@@ -120,10 +120,13 @@ echo
 echo "Pushed platforms:"
 # Informational only: the push already succeeded, so a failed read here must
 # not hide the "Done" summary and the pinning reminder below.
-if ! pushed="$(docker buildx imagetools inspect "${IMAGE}" 2>&1)"; then
-  pushed="  (could not read back the index: ${pushed})"
+if pushed="$(docker buildx imagetools inspect "${IMAGE}" 2>&1)"; then
+  # A one-platform push is a plain manifest with no "Platform:" lines.
+  sed -n 's/^ *Platform: */  /p' <<< "${pushed}" | grep -v 'unknown/unknown' \
+    || echo "  ${PLATFORMS}"
+else
+  echo "  (could not read back the index: ${pushed})"
 fi
-sed -n 's/^ *Platform: */  /p' <<< "${pushed}" | grep -v 'unknown/unknown' || echo "${pushed}"
 echo
 echo "Done: ${IMAGE}"
 echo "Verify anonymous pull (package must be public -- see the note at the top):"
