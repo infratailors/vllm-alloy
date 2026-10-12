@@ -28,6 +28,11 @@ ALLOY_PID=$!
 python3 /usr/local/bin/gpu_exporter.py &
 GPU_PID=$!
 
+# --- Egress preflight (diagnostic only; see egress_preflight.sh) -------------
+# shellcheck source=egress_preflight.sh
+source "$(dirname "$0")/egress_preflight.sh"
+egress_preflight
+
 # --- vLLM (background, but health-determining) -------------------------------
 # Split EXTRA_VLLM_ARGS into an array so each flag is its own argv entry.
 read -ra EXTRA_ARGS <<< "${EXTRA_VLLM_ARGS:-}"
@@ -43,19 +48,42 @@ python3 -m vllm.entrypoints.openai.api_server \
 VLLM_PID=$!
 
 # --- Forward termination signals to both children ---------------------------
+TERMINATING=0
 term_handler() {
+  TERMINATING=1
   kill -TERM "${VLLM_PID}"  2>/dev/null || true
   kill -TERM "${ALLOY_PID}" 2>/dev/null || true
   kill -TERM "${GPU_PID}"   2>/dev/null || true
 }
 trap term_handler SIGTERM SIGINT
 
-# --- Wait for whichever child exits first -----------------------------------
-wait -n "${VLLM_PID}" "${ALLOY_PID}"
+# --- Wait until vLLM or Alloy exits, or we are told to stop ------------------
+# Plain `wait -n` (no PIDs) returns for any child, the GPU exporter included,
+# and also for a child that exited before we got here; hence the loop. Exit
+# codes are collected afterwards with `wait PID`, which still reports a child
+# `wait -n` already returned for. Nothing here may trip `set -e`.
+while [[ ${TERMINATING} -eq 0 ]] \
+      && kill -0 "${VLLM_PID}" 2>/dev/null && kill -0 "${ALLOY_PID}" 2>/dev/null; do
+  wait -n || true
+done
 
-if ! kill -0 "${VLLM_PID}" 2>/dev/null; then
+rc=0
+if [[ ${TERMINATING} -eq 1 ]]; then
+  # Stopped by the platform (redeploy, scale-down): the children already got
+  # TERM. Let them finish and exit with vLLM's code. A repeated signal
+  # interrupts `wait` (it returns >128 with vLLM still draining), so loop
+  # until vLLM is gone, then collect its code.
+  # (127: no such child, e.g. the PID was reused by another process.)
+  while kill -0 "${VLLM_PID}" 2>/dev/null; do
+    wait "${VLLM_PID}" 2>/dev/null || [[ $? -ne 127 ]] || break
+  done
+  wait "${VLLM_PID}" 2>/dev/null || rc=$?
+  wait "${ALLOY_PID}" 2>/dev/null || true
+  echo "entrypoint: terminated by signal; vLLM exited (code ${rc})." >&2
+  exit "${rc}"
+elif ! kill -0 "${VLLM_PID}" 2>/dev/null; then
   # vLLM exited — propagate its real code and stop Alloy.
-  wait "${VLLM_PID}"; rc=$?
+  wait "${VLLM_PID}" || rc=$?
   echo "entrypoint: vLLM exited (code ${rc}); stopping Alloy and container." >&2
   kill -TERM "${ALLOY_PID}" 2>/dev/null || true
   wait "${ALLOY_PID}" 2>/dev/null || true
@@ -63,8 +91,10 @@ if ! kill -0 "${VLLM_PID}" 2>/dev/null; then
 else
   # Alloy died first while vLLM is still up: exit non-zero to force a restart
   # so metrics resume (vLLM stays health-determining via its /health probe).
-  echo "entrypoint: Alloy exited unexpectedly; terminating to force a restart." >&2
+  # (If both exit at the same instant we may land here; the code shows it.)
   kill -TERM "${VLLM_PID}" 2>/dev/null || true
-  wait "${VLLM_PID}" 2>/dev/null || true
+  wait "${VLLM_PID}" 2>/dev/null || rc=$?
+  echo "entrypoint: Alloy exited unexpectedly; stopped vLLM (code ${rc})" \
+       "and terminating to force a restart." >&2
   exit 1
 fi
